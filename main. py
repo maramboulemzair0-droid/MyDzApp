@@ -1,0 +1,1380 @@
+
+import json
+import os
+import shutil
+import requests
+from kivy.app import App
+from kivy.clock import Clock
+from kivy.core.window import Window
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
+from kivy.uix.filechooser import FileChooserListView
+from kivy.uix.image import AsyncImage, Image
+from kivy.uix.label import Label
+from kivy.uix.popup import Popup
+from kivy.uix.scatterlayout import ScatterLayout
+from kivy.uix.screenmanager import Screen, ScreenManager
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.textinput import TextInput
+
+Window.clearcolor = (0.09, 0.11, 0.15, 1)
+
+FIREBASE_URL = "https://study-app-demo-default-rtdb.firebaseio.com/resumes"
+DATA_FILE = "app_data.json"
+
+
+def load_local_data():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def save_local_data(data):
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"Erreur Sauvegarde: {e}")
+
+
+APP_DATA = load_local_data()
+
+if "liked_items" not in APP_DATA:
+    APP_DATA["liked_items"] = []
+
+
+# --- 1. HomeScreen ---
+
+
+class HomeScreen(Screen):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        layout = BoxLayout(orientation="vertical", padding=25, spacing=15)
+
+        title = Label(
+            text="[b]DzSummary[/b]\n[size=14sp][color=70a1ff]Mes Resumes Online[/color][/size]",
+            markup=True,
+            font_size="26sp",
+            color=(1, 1, 1, 1),
+            size_hint_y=0.2,
+            halign="center",
+        )
+        layout.add_widget(title)
+
+        btn_cem = Button(
+            text="🎓 CEM (Moyen)",
+            font_size="18sp",
+            bold=True,
+            background_normal="",
+            background_color=(0.12, 0.43, 0.61, 1),
+            color=(1, 1, 1, 1),
+        )
+        btn_cem.bind(
+            on_release=lambda x: setattr(self.manager, "current", "cem_years")
+        )
+        layout.add_widget(btn_cem)
+
+        btn_lycee = Button(
+            text="🏫 LYCEE (Secondaire)",
+            font_size="18sp",
+            bold=True,
+            background_normal="",
+            background_color=(0.15, 0.55, 0.45, 1),
+            color=(1, 1, 1, 1),
+        )
+        btn_lycee.bind(
+            on_release=lambda x: setattr(
+                self.manager, "current", "lycee_years"
+            )
+        )
+        layout.add_widget(btn_lycee)
+
+        btn_leaderboard = Button(
+            text="🏆 Tableau d'Honneur",
+            font_size="16sp",
+            bold=True,
+            background_normal="",
+            background_color=(0.85, 0.55, 0.15, 1),
+            color=(1, 1, 1, 1),
+            size_hint_y=0.15,
+        )
+        btn_leaderboard.bind(on_release=self.go_to_leaderboard)
+        layout.add_widget(btn_leaderboard)
+
+        developer_label = Label(
+            text="[i]Developpe par: Maram Boulemzair[/i]",
+            markup=True,
+            font_size="13sp",
+            color=(0.9, 0.75, 0.3, 1),
+            size_hint_y=0.1,
+            halign="center",
+        )
+        layout.add_widget(developer_label)
+        self.add_widget(layout)
+
+    def go_to_leaderboard(self, instance):
+        lb_screen = self.manager.get_screen("leaderboard")
+        lb_screen.load_leaderboard()
+        self.manager.current = "leaderboard"
+
+
+# --- 1.1 CEMYearsScreen ---
+
+
+class CEMYearsScreen(Screen):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        layout = BoxLayout(orientation="vertical", padding=20, spacing=10)
+
+        title = Label(
+            text="[b]CEM - Choisir l'annee[/b]",
+            markup=True,
+            font_size="20sp",
+            size_hint_y=0.15,
+            color=(0.4, 0.7, 1, 1),
+        )
+        layout.add_widget(title)
+
+        years = [
+            ("1ere Annee Moyenne (1AM)", "1AM"),
+            ("2eme Annee Moyenne (2AM)", "2AM"),
+            ("3eme Annee Moyenne (3AM)", "3AM"),
+            ("4eme Annee Moyenne (BEM)", "BEM"),
+        ]
+
+        for text, year_code in years:
+            btn = Button(
+                text=text,
+                font_size="15sp",
+                background_color=(0.16, 0.22, 0.3, 1),
+                background_normal="",
+            )
+            btn.bind(
+                on_release=lambda x, y=year_code: self.go_to_trimester(y)
+            )
+            layout.add_widget(btn)
+
+        btn_back = Button(
+            text="Retour",
+            size_hint_y=0.15,
+            background_color=(0.7, 0.2, 0.25, 1),
+            background_normal="",
+        )
+        btn_back.bind(
+            on_release=lambda x: setattr(self.manager, "current", "home")
+        )
+        layout.add_widget(btn_back)
+        self.add_widget(layout)
+
+    def go_to_trimester(self, year_code):
+        tri_screen = self.manager.get_screen("trimester")
+        tri_screen.set_context(year_code, is_lycee=False)
+        self.manager.current = "trimester"
+
+
+# --- 1.2 LyceeYearsScreen ---
+
+
+class LyceeYearsScreen(Screen):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        layout = BoxLayout(orientation="vertical", padding=20, spacing=10)
+
+        title = Label(
+            text="[b]LYCEE - Choisir l'annee[/b]",
+            markup=True,
+            font_size="20sp",
+            size_hint_y=0.15,
+            color=(0.3, 0.8, 0.6, 1),
+        )
+        layout.add_widget(title)
+
+        years = [
+            ("1ere Annee Secondaire (1AS)", "1AS"),
+            ("2eme Annee Secondaire (2AS)", "2AS"),
+            ("3eme Annee Secondaire (3AS / BAC)", "3AS"),
+        ]
+
+        for text, year_code in years:
+            btn = Button(
+                text=text,
+                font_size="15sp",
+                background_color=(0.14, 0.28, 0.25, 1),
+                background_normal="",
+            )
+            btn.bind(
+                on_release=lambda x, y=year_code: self.go_to_trimester(y)
+            )
+            layout.add_widget(btn)
+
+        btn_back = Button(
+            text="Retour",
+            size_hint_y=0.15,
+            background_color=(0.7, 0.2, 0.25, 1),
+            background_normal="",
+        )
+        btn_back.bind(
+            on_release=lambda x: setattr(self.manager, "current", "home")
+        )
+        layout.add_widget(btn_back)
+        self.add_widget(layout)
+
+    def go_to_trimester(self, year_code):
+        tri_screen = self.manager.get_screen("trimester")
+        tri_screen.set_context(year_code, is_lycee=True)
+        self.manager.current = "trimester"
+
+
+# --- 2. LeaderboardScreen ---
+
+
+class LeaderboardScreen(Screen):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        layout = BoxLayout(orientation="vertical", padding=15, spacing=10)
+
+        title = Label(
+            text="[b]🏆 Tableau d'Honneur[/b]",
+            markup=True,
+            font_size="20sp",
+            color=(1, 0.8, 0.2, 1),
+            size_hint_y=0.1,
+        )
+        layout.add_widget(title)
+
+        self.container = BoxLayout(
+            orientation="vertical", spacing=10, size_hint_y=None
+        )
+        self.container.bind(minimum_height=self.container.setter("height"))
+
+        scroll = ScrollView()
+        scroll.add_widget(self.container)
+        layout.add_widget(scroll)
+
+        btn_back = Button(
+            text="Retour",
+            size_hint_y=0.1,
+            background_color=(0.7, 0.2, 0.25, 1),
+            background_normal="",
+        )
+        btn_back.bind(
+            on_release=lambda x: setattr(self.manager, "current", "home")
+        )
+        layout.add_widget(btn_back)
+
+        self.add_widget(layout)
+
+    def load_leaderboard(self):
+        self.container.clear_widgets()
+        self.container.add_widget(
+            Label(text="Chargement...", size_hint_y=None, height=40)
+        )
+        Clock.schedule_once(lambda dt: self.fetch_data(), 0.1)
+
+    def fetch_data(self):
+        self.container.clear_widgets()
+        student_scores = {}
+        try:
+            for key, items in APP_DATA.items():
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            student = str(item.get("student", "")).strip()
+                            if student:
+                                likes = item.get("likes", 0)
+                                if not isinstance(likes, int):
+                                    likes = 0
+                                if student not in student_scores:
+                                    student_scores[student] = {
+                                        "likes": 0,
+                                        "count": 0,
+                                    }
+                                student_scores[student]["likes"] += likes
+                                student_scores[student]["count"] += 1
+
+            res = requests.get(f"{FIREBASE_URL}.json", timeout=4)
+            if res.status_code == 200 and res.json():
+                data = res.json()
+                if isinstance(data, dict):
+                    for cat_key, cat_data in data.items():
+                        if isinstance(cat_data, dict):
+                            for item_id, item in cat_data.items():
+                                if isinstance(item, dict):
+                                    student = str(
+                                        item.get("student", "")
+                                    ).strip()
+                                    if student:
+                                        likes = item.get("likes", 0)
+                                        if not isinstance(likes, int):
+                                            likes = 0
+                                        if student not in student_scores:
+                                            student_scores[student] = {
+                                                "likes": 0,
+                                                "count": 0,
+                                            }
+                                        student_scores[student]["likes"] = max(
+                                            student_scores[student]["likes"],
+                                            likes,
+                                        )
+        except Exception as e:
+            print(f"Erreur Leaderboard: {e}")
+
+        sorted_students = sorted(
+            student_scores.items(),
+            key=lambda x: (x[1]["likes"], x[1]["count"]),
+            reverse=True,
+        )
+
+        if sorted_students:
+            ranks = ["1st 🥇", "2nd 🥈", "3rd 🥉"]
+            for index, (student, stats) in enumerate(sorted_students):
+                rank_icon = ranks[index] if index < 3 else f"#{index+1}"
+                card = BoxLayout(
+                    orientation="horizontal",
+                    size_hint_y=None,
+                    height=60,
+                    padding=10,
+                    spacing=10,
+                )
+                lbl_rank = Label(
+                    text=f"[b]{rank_icon}[/b]",
+                    markup=True,
+                    font_size="16sp",
+                    size_hint_x=0.25,
+                    color=(1, 0.8, 0.2, 1),
+                )
+                lbl_info = Label(
+                    text=f"[b]{student}[/b]\n[size=12sp]{stats['count']} Resume(s) | {stats['likes']} Likes[/size]",
+                    markup=True,
+                    size_hint_x=0.75,
+                    halign="left",
+                )
+                card.add_widget(lbl_rank)
+                card.add_widget(lbl_info)
+                self.container.add_widget(card)
+        else:
+            self.container.add_widget(
+                Label(
+                    text="Aucun resume publie pour le moment.",
+                    size_hint_y=None,
+                    height=40,
+                )
+            )
+
+
+# --- 3. TrimesterScreen ---
+
+
+class TrimesterScreen(Screen):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.selected_year = ""
+        self.is_lycee = False
+        layout = BoxLayout(orientation="vertical", padding=25, spacing=15)
+
+        self.title_label = Label(
+            text="",
+            markup=True,
+            font_size="20sp",
+            size_hint_y=0.2,
+            color=(0.4, 0.8, 0.7, 1),
+        )
+        layout.add_widget(self.title_label)
+
+        trimesters = [
+            ("1er Trimestre", "T1"),
+            ("2eme Trimestre", "T2"),
+            ("3eme Trimestre", "T3"),
+        ]
+        for text, tri_code in trimesters:
+            btn = Button(
+                text=text,
+                font_size="16sp",
+                background_color=(0.18, 0.28, 0.38, 1),
+                background_normal="",
+            )
+            btn.bind(on_release=lambda x, t=tri_code: self.go_next(t))
+            layout.add_widget(btn)
+
+        btn_back = Button(
+            text="Retour",
+            size_hint_y=0.15,
+            background_color=(0.7, 0.2, 0.25, 1),
+            background_normal="",
+        )
+        btn_back.bind(on_release=self.go_back)
+        layout.add_widget(btn_back)
+
+        self.add_widget(layout)
+
+    def set_context(self, year_code, is_lycee):
+        self.selected_year = year_code
+        self.is_lycee = is_lycee
+        self.title_label.text = f"[b]{year_code} - Choisir Trimestre[/b]"
+
+    def go_next(self, tri_code):
+        if self.is_lycee:
+            branch_screen = self.manager.get_screen("branch")
+            branch_screen.set_context(self.selected_year, tri_code)
+            self.manager.current = "branch"
+        else:
+            subject_screen = self.manager.get_screen("subject")
+            subject_screen.set_context(
+                self.selected_year, tri_code, branch=""
+            )
+            self.manager.current = "subject"
+
+    def go_back(self, instance):
+        if self.is_lycee:
+            self.manager.current = "lycee_years"
+        else:
+            self.manager.current = "cem_years"
+
+
+# --- 3.1 BranchScreen ---
+
+
+class BranchScreen(Screen):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.selected_year = ""
+        self.selected_tri = ""
+        layout = BoxLayout(orientation="vertical", padding=20, spacing=10)
+
+        self.title_label = Label(
+            text="",
+            markup=True,
+            font_size="18sp",
+            size_hint_y=0.12,
+            color=(0.3, 0.8, 1, 1),
+        )
+        layout.add_widget(self.title_label)
+
+        branches = [
+            ("Sciences Exp.", "Sciences"),
+            ("Mathematiques", "Maths"),
+            ("Technique Math", "TechMath"),
+            ("Lettres & Philosophie", "Lettres"),
+            ("Langues Etrangeres", "Langues"),
+            ("Gestion & Economie", "Gestion"),
+        ]
+
+        scroll = ScrollView()
+        b_layout = BoxLayout(
+            orientation="vertical", spacing=10, size_hint_y=None
+        )
+        b_layout.bind(minimum_height=b_layout.setter("height"))
+
+        for text, code in branches:
+            btn = Button(
+                text=text,
+                size_hint_y=None,
+                height=50,
+                font_size="15sp",
+                background_color=(0.14, 0.32, 0.28, 1),
+                background_normal="",
+            )
+            btn.bind(on_release=lambda x, b=code: self.go_to_subjects(b))
+            b_layout.add_widget(btn)
+
+        scroll.add_widget(b_layout)
+        layout.add_widget(scroll)
+
+        btn_back = Button(
+            text="Retour",
+            size_hint_y=0.12,
+            background_color=(0.7, 0.2, 0.25, 1),
+            background_normal="",
+        )
+        btn_back.bind(
+            on_release=lambda x: setattr(self.manager, "current", "trimester")
+        )
+        layout.add_widget(btn_back)
+
+        self.add_widget(layout)
+
+    def set_context(self, year, tri):
+        self.selected_year = year
+        self.selected_tri = tri
+        self.title_label.text = f"[b]{year} | {tri} - Choisir Filiere[/b]"
+
+    def go_to_subjects(self, branch_code):
+        subject_screen = self.manager.get_screen("subject")
+        subject_screen.set_context(
+            self.selected_year, self.selected_tri, branch_code
+        )
+        self.manager.current = "subject"
+
+
+# --- 4. SubjectScreen ---
+
+
+class SubjectScreen(Screen):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.selected_year = ""
+        self.selected_tri = ""
+        self.selected_branch = ""
+        layout = BoxLayout(orientation="vertical", padding=15, spacing=10)
+
+        self.title_label = Label(
+            text="",
+            markup=True,
+            font_size="18sp",
+            size_hint_y=0.12,
+            color=(0.3, 0.8, 1, 1),
+        )
+        layout.add_widget(self.title_label)
+
+        subjects = [
+            "Mathematiques",
+            "Physique",
+            "Sciences",
+            "Arabe",
+            "Francais",
+            "Anglais",
+            "Histoire-Geo",
+            "Islamique",
+            "Philosophie",
+        ]
+
+        scroll = ScrollView()
+        sub_layout = BoxLayout(
+            orientation="vertical", spacing=10, size_hint_y=None
+        )
+        sub_layout.bind(minimum_height=sub_layout.setter("height"))
+
+        for sub in subjects:
+            btn = Button(
+                text=sub,
+                size_hint_y=None,
+                height=50,
+                font_size="15sp",
+                background_color=(0.16, 0.24, 0.32, 1),
+                background_normal="",
+            )
+            btn.bind(on_release=lambda x, s=sub: self.go_to_summaries(s))
+            sub_layout.add_widget(btn)
+
+        scroll.add_widget(sub_layout)
+        layout.add_widget(scroll)
+
+        btn_back = Button(
+            text="Retour",
+            size_hint_y=0.12,
+            background_color=(0.7, 0.2, 0.25, 1),
+            background_normal="",
+        )
+        btn_back.bind(on_release=self.go_back)
+        layout.add_widget(btn_back)
+
+        self.add_widget(layout)
+
+    def set_context(self, year_code, tri_code, branch=""):
+        self.selected_year = year_code
+        self.selected_tri = tri_code
+        self.selected_branch = branch
+        b_text = f" | {branch}" if branch else ""
+        self.title_label.text = (
+            f"[b]{year_code}{b_text} | {tri_code} - Matiere[/b]"
+        )
+
+    def go_to_summaries(self, subject_name):
+        summary_screen = self.manager.get_screen("summary_list")
+        summary_screen.load_summaries(
+            self.selected_year,
+            self.selected_tri,
+            self.selected_branch,
+            subject_name,
+        )
+        self.manager.current = "summary_list"
+
+    def go_back(self, instance):
+        if self.selected_branch:
+            self.manager.current = "branch"
+        else:
+            self.manager.current = "trimester"
+
+
+# --- 5. SummaryListScreen ---
+
+
+class SummaryListScreen(Screen):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.year = ""
+        self.tri = ""
+        self.branch = ""
+        self.subject = ""
+        self.all_loaded_items = []
+
+        main_layout = BoxLayout(orientation="vertical", padding=15, spacing=10)
+
+        self.header = Label(
+            text="",
+            markup=True,
+            font_size="16sp",
+            color=(0.4, 0.9, 0.7, 1),
+            size_hint_y=0.07,
+        )
+        main_layout.add_widget(self.header)
+
+        self.search_input = TextInput(
+            hint_text="🔍 Chercher par nom d'eleve...",
+            multiline=False,
+            size_hint_y=0.08,
+        )
+        self.search_input.bind(text=self.on_search_text_change)
+        main_layout.add_widget(self.search_input)
+
+        self.summary_container = BoxLayout(
+            orientation="vertical", spacing=20, size_hint_y=None
+        )
+        self.summary_container.bind(
+            minimum_height=self.summary_container.setter("height")
+        )
+
+        scroll = ScrollView()
+        scroll.add_widget(self.summary_container)
+        main_layout.add_widget(scroll)
+
+        bottom_bar = BoxLayout(size_hint_y=0.1, spacing=10)
+        btn_back = Button(
+            text="Retour",
+            background_color=(0.7, 0.2, 0.25, 1),
+            background_normal="",
+        )
+        btn_back.bind(
+            on_release=lambda x: setattr(
+                self.manager, "current", "subject"
+            )
+        )
+
+        btn_add = Button(
+            text="+ Ajouter Resume",
+            background_color=(0.12, 0.55, 0.38, 1),
+            background_normal="",
+        )
+        btn_add.bind(on_release=self.go_to_add)
+
+        bottom_bar.add_widget(btn_back)
+        bottom_bar.add_widget(btn_add)
+        main_layout.add_widget(bottom_bar)
+
+        self.add_widget(main_layout)
+
+    def load_summaries(self, year, tri, branch, subject):
+        self.year = year
+        self.tri = tri
+        self.branch = branch
+        self.subject = subject
+        self.search_input.text = ""
+        self.all_loaded_items = []
+
+        b_text = f" > {branch}" if branch else ""
+        self.header.text = f"[b]{year}{b_text} > {tri} > {subject}[/b]"
+        self.summary_container.clear_widgets()
+
+        key = (
+            f"{self.year}_{self.branch}_{self.tri}_{self.subject}"
+            if self.branch
+            else f"{self.year}_{self.tri}_{self.subject}"
+        )
+
+        if key in APP_DATA:
+            for i, item in enumerate(APP_DATA[key]):
+                item["local_index"] = i
+                self.all_loaded_items.append(item)
+            self.render_items(self.all_loaded_items)
+
+        Clock.schedule_once(lambda dt: self.fetch_online_data(), 0.1)
+
+    def fetch_online_data(self):
+        key = (
+            f"{self.year}_{self.branch}_{self.tri}_{self.subject}"
+            if self.branch
+            else f"{self.year}_{self.tri}_{self.subject}"
+        )
+        try:
+            response = requests.get(
+                f"{FIREBASE_URL}/{key}.json", timeout=4
+            )
+            if response.status_code == 200 and response.json():
+                online_items = response.json()
+                self.all_loaded_items = []
+                for item_id, item in online_items.items():
+                    if isinstance(item, dict) and item.get("reports", 0) < 3:
+                        item["firebase_id"] = item_id
+                        self.all_loaded_items.append(item)
+                self.all_loaded_items.sort(
+                    key=lambda x: x.get("likes", 0), reverse=True
+                )
+                self.render_items(self.all_loaded_items)
+        except Exception as e:
+            print(f"Erreur Connexion: {e}")
+
+    def on_search_text_change(self, instance, text):
+        query = text.strip().lower()
+        if not query:
+            self.render_items(self.all_loaded_items)
+        else:
+            filtered = [
+                item
+                for item in self.all_loaded_items
+                if query in str(item.get("student", "")).lower()
+            ]
+            self.render_items(filtered)
+
+    def render_items(self, items_to_show):
+        self.summary_container.clear_widgets()
+        if not items_to_show:
+            self.summary_container.add_widget(
+                Label(
+                    text="Aucun resume trouve",
+                    size_hint_y=None,
+                    height=40,
+                )
+            )
+            return
+
+        for item in items_to_show:
+            images = item.get("images", [])
+            if not images:
+                single_img = item.get("image_url") or item.get("path", "")
+                if single_img:
+                    images = [single_img]
+
+            likes = item.get("likes", 0)
+            reports = item.get("reports", 0)
+            fid = item.get("firebase_id") or item.get("id", None)
+            idx = item.get("local_index", None)
+
+            self.add_card_widget(
+                item.get("student", ""),
+                item.get("prof", ""),
+                images,
+                firebase_id=fid,
+                local_index=idx,
+                likes=likes,
+                reports=reports,
+            )
+
+    def add_card_widget(
+        self,
+        student,
+        prof,
+        images,
+        firebase_id=None,
+        local_index=None,
+        likes=0,
+        reports=0,
+    ):
+        card = BoxLayout(
+            orientation="vertical",
+            size_hint_y=None,
+            height=540,
+            padding=10,
+            spacing=5,
+        )
+
+        top_row = BoxLayout(size_hint_y=0.1, spacing=5)
+        info = Label(
+            text=f"[b]Eleve:[/b] {student} | [b]Prof:[/b] {prof}",
+            markup=True,
+            color=(1, 1, 1, 1),
+        )
+        btn_delete = Button(
+            text="X",
+            size_hint_x=0.12,
+            background_color=(0.9, 0.1, 0.1, 1),
+            background_normal="",
+            bold=True,
+        )
+        btn_delete.bind(
+            on_release=lambda x: self.confirm_delete(
+                firebase_id, local_index
+            )
+        )
+        top_row.add_widget(info)
+        top_row.add_widget(btn_delete)
+        card.add_widget(top_row)
+
+        if images:
+            current_page = [0]
+
+            def get_formatted_url(url):
+                if url.startswith("http") and not (
+                    url.endswith(".jpg") or url.endswith(".png")
+                ):
+                    return f"https://images.weserv.nl/?url={url}"
+                return url
+
+            first_url = get_formatted_url(images[0])
+            if first_url.startswith("http"):
+                img_widget = AsyncImage(
+                    source=first_url,
+                    allow_stretch=True,
+                    keep_ratio=True,
+                    size_hint_y=0.6,
+                )
+            else:
+                img_widget = Image(
+                    source=first_url,
+                    allow_stretch=True,
+                    keep_ratio=True,
+                    size_hint_y=0.6,
+                )
+
+            nav_row = BoxLayout(size_hint_y=0.08, spacing=5)
+            btn_prev = Button(
+                text="< Precedent",
+                size_hint_x=0.35,
+                background_color=(0.2, 0.3, 0.4, 1),
+                background_normal="",
+            )
+            lbl_page = Label(text=f"Page 1/{len(images)}", size_hint_x=0.3)
+            btn_next = Button(
+                text="Suivant >",
+                size_hint_x=0.35,
+                background_color=(0.2, 0.3, 0.4, 1),
+                background_normal="",
+            )
+
+            def update_page():
+                idx = current_page[0]
+                lbl_page.text = f"Page {idx+1}/{len(images)}"
+                url = get_formatted_url(images[idx])
+                img_widget.source = url
+                img_widget.reload()
+
+            btn_prev.bind(
+                on_release=lambda x: current_page.__setitem__(
+                    0, max(0, current_page[0] - 1)
+                )
+                or update_page()
+            )
+            btn_next.bind(
+                on_release=lambda x: current_page.__setitem__(
+                    0, min(len(images) - 1, current_page[0] + 1)
+                )
+                or update_page()
+            )
+
+            nav_row.add_widget(btn_prev)
+            nav_row.add_widget(lbl_page)
+            nav_row.add_widget(btn_next)
+
+            action_row = BoxLayout(size_hint_y=0.1, spacing=8)
+            btn_view = Button(
+                text="🔍 Zoom",
+                size_hint_x=0.5,
+                background_color=(0.2, 0.45, 0.65, 1),
+                background_normal="",
+            )
+            btn_view.bind(
+                on_release=lambda x: self.open_full_image(
+                    images[current_page[0]]
+                )
+            )
+
+            btn_download = Button(
+                text="📥 Telecharger",
+                size_hint_x=0.5,
+                background_color=(0.15, 0.55, 0.4, 1),
+                background_normal="",
+            )
+            btn_download.bind(
+                on_release=lambda x: self.download_image(
+                    images[current_page[0]]
+                )
+            )
+
+            action_row.add_widget(btn_view)
+            action_row.add_widget(btn_download)
+
+            card.add_widget(img_widget)
+            card.add_widget(nav_row)
+            card.add_widget(action_row)
+        else:
+            card.add_widget(Label(text="[Image Indisponible]", size_hint_y=0.75))
+
+        bottom_row = BoxLayout(size_hint_y=0.12, spacing=8)
+        unique_id = (
+            firebase_id
+            or f"{self.year}_{self.branch}_{self.tri}_{self.subject}_{local_index}"
+        )
+        has_liked = unique_id in APP_DATA.get("liked_items", [])
+
+        if has_liked:
+            btn_like = Button(
+                text=f"Liked ✔️ ({likes})",
+                size_hint_x=0.35,
+                background_color=(0.4, 0.4, 0.4, 1),
+                background_normal="",
+                disabled=True,
+                bold=True,
+            )
+        else:
+            btn_like = Button(
+                text=f"Like ({likes})",
+                size_hint_x=0.35,
+                background_color=(0.85, 0.25, 0.4, 1),
+                background_normal="",
+                bold=True,
+            )
+
+        btn_like.bind(
+            on_release=lambda x, fid=firebase_id, idx=local_index, l=likes, b=btn_like, uid=unique_id: self.add_like(
+                fid, idx, l, b, uid
+            )
+        )
+
+        btn_report = Button(
+            text="Signaler",
+            size_hint_x=0.35,
+            background_color=(0.8, 0.4, 0.1, 1),
+            background_normal="",
+            bold=True,
+        )
+        btn_report.bind(
+            on_release=lambda x, fid=firebase_id, r=reports, b=btn_report: self.report_item(
+                fid, r, b
+            )
+        )
+
+        by_dev = Label(
+            text="[size=10sp][color=ffcc00]By Maram[/color][/size]",
+            markup=True,
+            size_hint_x=0.3,
+            halign="right",
+        )
+
+        bottom_row.add_widget(btn_like)
+        bottom_row.add_widget(btn_report)
+        bottom_row.add_widget(by_dev)
+
+        card.add_widget(bottom_row)
+        self.summary_container.add_widget(card)
+
+    def download_image(self, img_url):
+        target_dir = "/sdcard/Download" if os.path.exists("/sdcard/Download") else "."
+        filename = f"Resume_{os.path.basename(img_url)}"
+        if not (filename.endswith(".jpg") or filename.endswith(".png")):
+            filename += ".jpg"
+        dest_path = os.path.join(target_dir, filename)
+
+        try:
+            if img_url.startswith("http"):
+                res = requests.get(img_url, stream=True, timeout=5)
+                if res.status_code == 200:
+                    with open(dest_path, "wb") as f:
+                        for chunk in res.iter_content(1024):
+                            f.write(chunk)
+            else:
+                shutil.copy(img_url, dest_path)
+
+            popup = Popup(
+                title="Succes",
+                content=Label(text=f"Photo enregistree dans:\n{dest_path}"),
+                size_hint=(0.85, 0.35),
+            )
+            popup.open()
+        except Exception as e:
+            popup = Popup(
+                title="Erreur",
+                content=Label(text=f"Impossible de telecharger:\n{e}"),
+                size_hint=(0.85, 0.35),
+            )
+            popup.open()
+
+    def add_like(
+        self, firebase_id, local_index, current_likes, btn_widget, unique_id
+    ):
+        new_likes = current_likes + 1
+        btn_widget.text = f"Liked ✔️ ({new_likes})"
+        btn_widget.background_color = (0.4, 0.4, 0.4, 1)
+        btn_widget.disabled = True
+
+        if "liked_items" not in APP_DATA:
+            APP_DATA["liked_items"] = []
+        if unique_id not in APP_DATA["liked_items"]:
+            APP_DATA["liked_items"].append(unique_id)
+
+        key = (
+            f"{self.year}_{self.branch}_{self.tri}_{self.subject}"
+            if self.branch
+            else f"{self.year}_{self.tri}_{self.subject}"
+        )
+
+        if (
+            key in APP_DATA
+            and local_index is not None
+            and local_index < len(APP_DATA[key])
+        ):
+            APP_DATA[key][local_index]["likes"] = new_likes
+
+        save_local_data(APP_DATA)
+
+        if firebase_id:
+            try:
+                requests.patch(
+                    f"{FIREBASE_URL}/{key}/{firebase_id}.json",
+                    json={"likes": new_likes},
+                    timeout=3,
+                )
+            except Exception as e:
+                print(f"Erreur Like: {e}")
+
+    def report_item(self, firebase_id, current_reports, btn_widget):
+        if firebase_id:
+            new_reports = current_reports + 1
+            key = (
+                f"{self.year}_{self.branch}_{self.tri}_{self.subject}"
+                if self.branch
+                else f"{self.year}_{self.tri}_{self.subject}"
+            )
+            try:
+                res = requests.patch(
+                    f"{FIREBASE_URL}/{key}/{firebase_id}.json",
+                    json={"reports": new_reports},
+                    timeout=3,
+                )
+                if res.status_code == 200:
+                    btn_widget.text = "Signale ✔️"
+                    btn_widget.disabled = True
+            except Exception as e:
+                print(f"Erreur Report: {e}")
+
+    def confirm_delete(self, firebase_id, local_index):
+        content = BoxLayout(orientation="vertical", padding=10, spacing=10)
+        content.add_widget(Label(text="Supprimer ce resume definitivement ?"))
+
+        btns = BoxLayout(spacing=10, size_hint_y=0.4)
+        btn_yes = Button(
+            text="Oui, Supprimer",
+            background_color=(0.8, 0.1, 0.1, 1),
+            background_normal="",
+        )
+        btn_no = Button(text="Annuler", background_normal="")
+
+        btns.add_widget(btn_no)
+        btns.add_widget(btn_yes)
+        content.add_widget(btns)
+
+        popup = Popup(
+            title="Confirmation", content=content, size_hint=(0.8, 0.4)
+        )
+        btn_yes.bind(
+            on_release=lambda x: self.execute_delete(
+                firebase_id, local_index, popup
+            )
+        )
+        btn_no.bind(on_release=popup.dismiss)
+        popup.open()
+
+    def execute_delete(self, firebase_id, local_index, popup):
+        key = (
+            f"{self.year}_{self.branch}_{self.tri}_{self.subject}"
+            if self.branch
+            else f"{self.year}_{self.tri}_{self.subject}"
+        )
+
+        if firebase_id:
+            try:
+                requests.delete(
+                    f"{FIREBASE_URL}/{key}/{firebase_id}.json", timeout=3
+                )
+            except Exception as e:
+                print(f"Erreur Delete Online: {e}")
+
+        if key in APP_DATA:
+            if local_index is not None and local_index < len(APP_DATA[key]):
+                APP_DATA[key].pop(local_index)
+
+        save_local_data(APP_DATA)
+        popup.dismiss()
+        self.load_summaries(self.year, self.tri, self.branch, self.subject)
+
+    def open_full_image(self, img_path):
+        detail_screen = self.manager.get_screen("image_detail")
+        detail_screen.set_image(img_path, self.name)
+        self.manager.current = "image_detail"
+
+    def go_to_add(self, instance):
+        add_screen = self.manager.get_screen("add_summary")
+        add_screen.set_context(self.year, self.tri, self.branch, self.subject)
+        self.manager.current = "add_summary"
+
+
+# --- 6. AddSummaryScreen ---
+
+
+class AddSummaryScreen(Screen):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.year = ""
+        self.tri = ""
+        self.branch = ""
+        self.subject = ""
+        self.selected_images = []
+
+        layout = BoxLayout(orientation="vertical", padding=20, spacing=10)
+
+        self.title_label = Label(
+            text="[b]Nouveau Resume[/b]",
+            markup=True,
+            font_size="18sp",
+            size_hint_y=0.1,
+        )
+        layout.add_widget(self.title_label)
+
+        self.txt_student = TextInput(
+            hint_text="Nom de l'eleve...", multiline=False, size_hint_y=0.12
+        )
+        self.txt_prof = TextInput(
+            hint_text="Nom du Prof / Chaine...",
+            multiline=False,
+            size_hint_y=0.12,
+        )
+
+        self.btn_select_img = Button(
+            text="+ Ajouter photo / page",
+            size_hint_y=0.15,
+            background_color=(0.2, 0.45, 0.7, 1),
+            background_normal="",
+        )
+        self.btn_select_img.bind(on_release=self.open_file_chooser)
+
+        self.lbl_selected_file = Label(
+            text="0 photo(s) choisie(s)",
+            size_hint_y=0.1,
+            color=(0.7, 0.7, 0.7, 1),
+        )
+
+        layout.add_widget(self.txt_student)
+        layout.add_widget(self.txt_prof)
+        layout.add_widget(self.btn_select_img)
+        layout.add_widget(self.lbl_selected_file)
+
+        btns_layout = BoxLayout(size_hint_y=0.15, spacing=10)
+        btn_cancel = Button(
+            text="Annuler",
+            background_color=(0.7, 0.2, 0.25, 1),
+            background_normal="",
+        )
+        btn_cancel.bind(
+            on_release=lambda x: setattr(
+                self.manager, "current", "summary_list"
+            )
+        )
+
+        self.btn_publish = Button(
+            text="Publier 🌐",
+            background_color=(0.12, 0.55, 0.38, 1),
+            background_normal="",
+        )
+        self.btn_publish.bind(on_release=self.publish)
+
+        btns_layout.add_widget(btn_cancel)
+        btns_layout.add_widget(self.btn_publish)
+        layout.add_widget(btns_layout)
+
+        self.add_widget(layout)
+
+    def set_context(self, year, tri, branch, subject):
+        self.year = year
+        self.tri = tri
+        self.branch = branch
+        self.subject = subject
+        self.selected_images = []
+        self.lbl_selected_file.text = "0 photo(s) choisie(s)"
+        b_text = f" ({branch})" if branch else ""
+        self.title_label.text = (
+            f"[b]Ajouter: {year}{b_text} - {tri} - {subject}[/b]"
+        )
+
+    def open_file_chooser(self, instance):
+        box = BoxLayout(orientation="vertical", padding=10, spacing=10)
+        split_box = BoxLayout(
+            orientation="horizontal", spacing=10, size_hint_y=0.85
+        )
+
+        start_path = "/sdcard/DCIM" if os.path.exists("/sdcard/DCIM") else "/sdcard"
+        filechooser = FileChooserListView(
+            path=start_path,
+            filters=["*.png", "*.jpg", "*.jpeg", "*.PNG", "*.JPG", "*.JPEG"],
+            size_hint_x=0.55,
+        )
+
+        preview_image = Image(
+            source="", allow_stretch=True, keep_ratio=True, size_hint_x=0.45
+        )
+
+        split_box.add_widget(filechooser)
+        split_box.add_widget(preview_image)
+
+        def show_preview(instance, selection):
+            if selection:
+                preview_image.source = selection[0]
+                preview_image.reload()
+
+        filechooser.bind(selection=show_preview)
+
+        btn_layout = BoxLayout(size_hint_y=0.15, spacing=10)
+        btn_close = Button(
+            text="Fermer",
+            background_color=(0.7, 0.2, 0.25, 1),
+            background_normal="",
+        )
+        btn_select = Button(
+            text="OK / Ajouter",
+            background_color=(0.12, 0.55, 0.38, 1),
+            background_normal="",
+        )
+
+        btn_layout.add_widget(btn_close)
+        btn_layout.add_widget(btn_select)
+
+        box.add_widget(split_box)
+        box.add_widget(btn_layout)
+
+        popup = Popup(
+            title="Choisir une photo", content=box, size_hint=(0.95, 0.95)
+        )
+
+        def confirm_selection(obj):
+            if filechooser.selection:
+                path = filechooser.selection[0]
+                self.selected_images.append(path)
+                self.lbl_selected_file.text = (
+                    f"{len(self.selected_images)} photo(s) choisie(s)"
+                )
+                popup.dismiss()
+
+        btn_select.bind(on_release=confirm_selection)
+        btn_close.bind(on_release=lambda x: popup.dismiss())
+        popup.open()
+
+    def publish(self, instance):
+        student = self.txt_student.text.strip()
+        prof = self.txt_prof.text.strip()
+
+        if student != "" and len(self.selected_images) > 0:
+            key = (
+                f"{self.year}_{self.branch}_{self.tri}_{self.subject}"
+                if self.branch
+                else f"{self.year}_{self.tri}_{self.subject}"
+            )
+
+            payload = {
+                "student": student,
+                "prof": prof,
+                "images": self.selected_images,
+                "likes": 0,
+                "reports": 0,
+            }
+
+            try:
+                res = requests.post(
+                    f"{FIREBASE_URL}/{key}.json", json=payload, timeout=3
+                )
+                if res.status_code == 200 and res.json():
+                    payload["id"] = res.json().get("name")
+            except Exception as e:
+                print(f"Erreur Envoi Fast: {e}")
+
+            if key not in APP_DATA:
+                APP_DATA[key] = []
+            APP_DATA[key].append(payload)
+            save_local_data(APP_DATA)
+
+            self.txt_student.text = ""
+            self.txt_prof.text = ""
+            self.selected_images = []
+            self.lbl_selected_file.text = "0 photo(s) choisie(s)"
+
+            summary_screen = self.manager.get_screen("summary_list")
+            summary_screen.load_summaries(
+                self.year, self.tri, self.branch, self.subject
+            )
+            self.manager.current = "summary_list"
+
+
+# --- 7. ImageDetailScreen ---
+
+
+class ImageDetailScreen(Screen):
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.previous_screen = "summary_list"
+        layout = BoxLayout(orientation="vertical", padding=10, spacing=10)
+
+        self.scatter = ScatterLayout(
+            do_rotation=False,
+            do_scale=True,
+            do_translation=True,
+            size_hint_y=0.9,
+        )
+        self.full_image = AsyncImage(allow_stretch=True, keep_ratio=True)
+        self.scatter.add_widget(self.full_image)
+
+        btn_back = Button(
+            text="Retour",
+            size_hint_y=0.1,
+            background_color=(0.7, 0.2, 0.25, 1),
+            background_normal="",
+        )
+        btn_back.bind(on_release=self.go_back)
+
+        layout.add_widget(self.scatter)
+        layout.add_widget(btn_back)
+        self.add_widget(layout)
+
+    def go_back(self, instance):
+        if self.manager:
+            self.manager.current = self.previous_screen
+
+    def set_image(self, img_path, back_screen):
+        self.scatter.scale = 1.0
+        self.scatter.pos = (0, 0)
+        self.full_image.source = img_path
+        self.full_image.reload()
+        self.previous_screen = back_screen
+
+
+# --- 8. StudyApp ---
+
+
+class StudyApp(App):
+
+    def build(self):
+        sm = ScreenManager()
+        sm.add_widget(HomeScreen(name="home"))
+        sm.add_widget(CEMYearsScreen(name="cem_years"))
+        sm.add_widget(LyceeYearsScreen(name="lycee_years"))
+        sm.add_widget(LeaderboardScreen(name="leaderboard"))
+        sm.add_widget(TrimesterScreen(name="trimester"))
+        sm.add_widget(BranchScreen(name="branch"))
+        sm.add_widget(SubjectScreen(name="subject"))
+        sm.add_widget(SummaryListScreen(name="summary_list"))
+        sm.add_widget(AddSummaryScreen(name="add_summary"))
+        sm.add_widget(ImageDetailScreen(name="image_detail"))
+        return sm
+
+
+if __name__ == "__main__":
+    StudyApp().run()
