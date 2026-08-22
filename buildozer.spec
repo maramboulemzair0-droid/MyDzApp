@@ -1,5 +1,4 @@
-
-[app]
+app]
 title = MyDzApp
 package.name = mydzapp
 package.domain = org.test
